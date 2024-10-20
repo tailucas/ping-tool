@@ -1,0 +1,29 @@
+services:
+  app:
+    env_file:
+      - .env
+    image: "${DOCKER_IMAGE}"
+    ports:
+      - "${SERVER_ADDRESS}:80:8080"
+    restart: unless-stopped
+    stop_grace_period: 45s
+    build:
+      network: host
+      # privileged: true
+      context: .
+      args:
+        ENCODING: "${ENCODING}"
+        LANG: "${D_LANG}"
+        LANGUAGE: "${D_LANGUAGE}"
+        LC_ALL: "${D_LC_ALL}"
+    logging:
+      driver: syslog
+      options:
+        syslog-format: "rfc3164"
+        tag: "${DEVICE_NAME}"
+    tmpfs:
+    - /tmp
+    hostname: ${DEVICE_NAME}
+    volumes:
+      - ./data:/data
+      - /dev/log:/dev/log

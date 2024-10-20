@@ -1,0 +1,95 @@
+# https://taskfile.dev
+
+version: '3'
+
+includes:
+  taskfile: ./app.yml
+
+vars:
+  USER_ID: 999
+  GROUP_ID: 999
+
+dotenv: ['.env']
+
+tasks:
+  default:
+    cmds:
+      - task: build
+  datadir:
+    desc: Create system user and associate with docker group.
+    cmds:
+      - mkdir -p ./data/
+      - sudo chown {{.USER_ID}}:{{.GROUP_ID}} ./data/
+      - sudo chmod 755 ./data/
+      - sudo chmod g+rws ./data/
+      - sudo rm -f ./data/app-std* ./data/cron-std* ./data/supervisor.sock
+  create-dot-env:
+    desc: Dump container environment to local file.
+    cmds:
+      - rm -f .env
+      - echo 'ENCODING="{{.ENCODING}}"' >> .env
+      - echo 'LANG="{{.LANG}}"' >> .env
+      - echo 'LANGUAGE="{{.LANGUAGE}}"' >> .env
+      - echo 'LC_ALL="{{.LC_ALL}}"' >> .env
+      - echo 'DOCKER_IMAGE="{{.PROJECT_NAME}}"' >> .env
+      - echo 'DEVICE_NAME="{{.PROJECT_NAME}}"' >> .env
+      - echo 'SERVER_ADDRESS="{{.SERVER_ADDRESS}}"' >> .env
+      - echo 'SERVER_PORT="{{.SERVER_PORT}}"' >> .env
+      - echo 'APP_NAME="{{.PROJECT_NAME}}"' >> .env
+      - echo 'NO_CRON="true"' >> .env
+      - echo 'RUN_JAVA_APP="false"' >> .env
+      - echo 'RUN_RUST_APP="false"' >> .env
+  docker:
+    deps: [create-dot-env]
+    desc: Generate a usable docker-compose.yml for Docker build.
+    preconditions:
+      - poetry -V
+      - python -V
+      - python3 -V
+      - cargo -V
+      - rustup -V
+      - test -f yaml_interpol
+      - test -f docker-compose.template
+    cmds:
+      - rm -f docker-compose.yml
+      - cp docker-compose.template docker-compose.yml
+    generates:
+      - docker-compose.yml
+  push:
+    deps: [build]
+    desc: Push built image to Docker Hub
+    preconditions:
+      - docker compose images
+    cmds:
+      - docker compose push
+  build:
+    deps: [docker]
+    desc: Clean up volume directory and build container image.
+    preconditions:
+      - docker compose -v
+    env:
+      D_LANG: "{{.LANG}}"
+      D_LANGUAGE: "{{.LANGUAGE}}"
+      D_LC_ALL: "{{.LC_ALL}}"
+    cmds:
+      - docker compose build --progress plain
+  run:
+    deps: [build, datadir]
+    desc: Run docker container
+    preconditions:
+      - docker -v
+      - test -f docker-compose.yml
+      - test -d ./data/
+    cmds:
+      - docker compose up
+  rund:
+    deps: [build, datadir]
+    desc: Run docker container and detach
+    preconditions:
+      - docker -v
+      - test -f docker-compose.yml
+      - test -d ./data/
+    cmds:
+      - docker compose up -d
+  connect:
+    cmd: ./connect_to_app.sh {{.DOCKER_APP}}
