@@ -11,9 +11,6 @@ app = "app.__main__:main"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-simplejson = "^3.19.2"
-python-dateutil = "^2.8.2"
-tailucas-pylib = "^0.4.6"
 icmplib = "^3.0.4"
 
 [build-system]

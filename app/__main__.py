@@ -1,22 +1,13 @@
 #!/usr/bin/env python
-import builtins
+import json
+import logging
 import logging.handlers
-import simplejson as json
+import os
+import signal
+import socket
+import sys
+from threading import Thread
 from typing import List
-
-# setup builtins used by pylib init
-from . import APP_NAME
-
-builtins.SENTRY_EXTRAS = []
-
-
-class CredsConfig:
-    sentry_dsn: f'opitem:"Sentry" opfield:{APP_NAME}.dsn' = None  # type: ignore
-
-
-# instantiate class
-builtins.creds_config = CredsConfig()
-from tailucas_pylib import app_config, log
 
 from functools import cached_property
 from http.cookies import SimpleCookie
@@ -29,6 +20,33 @@ from icmplib import ICMPLibError, NameLookupError, ICMPSocketError
 from icmplib import SocketAddressError, SocketPermissionError
 from icmplib import SocketUnavailableError, SocketBroadcastError, TimeoutExceeded
 from icmplib import ICMPError, DestinationUnreachable, TimeExceeded
+
+
+from . import APP_NAME
+log = logging.getLogger(APP_NAME)
+log.setLevel(logging.INFO)
+log_handler = None
+syslog_server = None
+try:
+    syslog_address = os.environ["SYSLOG_ADDRESS"]
+    syslog_server = urlparse(syslog_address)
+except KeyError:
+    pass
+if syslog_server and len(syslog_server.netloc) > 0:
+    protocol = None
+    if syslog_server.scheme == 'udp':
+        protocol = socket.SOCK_DGRAM
+    log_handler = logging.handlers.SysLogHandler(address=(syslog_server.hostname, syslog_server.port), socktype=protocol)
+elif os.path.exists("/dev/log"):
+    log_handler = logging.handlers.SysLogHandler(address="/dev/log")
+elif sys.stdout.isatty() or "SUPERVISOR_ENABLED" in os.environ:
+    log_handler = logging.StreamHandler(stream=sys.stdout)
+if log_handler:
+    # define the log format
+    formatter = logging.Formatter("%(name)s %(threadName)s [%(levelname)s] %(message)s")
+    log_handler.setFormatter(formatter)
+    log.addHandler(log_handler)
+
 
 class WebRequestHandler(BaseHTTPRequestHandler):
     @cached_property
@@ -102,13 +120,29 @@ class WebRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(bytes(json_response, 'utf-8'))
 
 
-def main():
-    log.setLevel(logging.INFO)
-    server_address = app_config.get('http', 'server_address')
-    server_port = app_config.getint('http', 'server_port')
-    log.info(f'Listening on {server_address}:{server_port}.')
-    server = HTTPServer((server_address, server_port), WebRequestHandler)
+def run_server(address, port):
+    global server
+    server = HTTPServer((address, port), WebRequestHandler)
     server.serve_forever()
+
+
+server: HTTPServer = None
+def handler(signum, frame):
+    global server
+    log.info(f'Signal {signum} received.')
+    if server:
+        server.shutdown()
+
+
+def main():
+    signal.signal(signal.SIGTERM, handler)
+    server_address = os.environ['SERVER_ADDRESS']
+    server_port = int(os.environ['SERVER_PORT'])
+    log.info(f'Listening on {server_address}:{server_port}.')
+    thread = Thread(target=run_server, name='Server', args=(server_address, server_port))
+    thread.start()
+    thread.join()
+    log.info('Shutting down...')
 
 
 if __name__ == "__main__":
