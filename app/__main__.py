@@ -92,7 +92,6 @@ class WebRequestHandler(BaseHTTPRequestHandler):
             min_latency = float(min_latency_arg)
             if test_latency < min_latency:
                 error_reason = f'Minimum RTT {test_latency}ms is less than minimum allowed {min_latency:.3f}ms.'
-                log.info(error_reason)
                 return {'result': 'error', 'reason': error_reason}
             else:
                 log.info(f'Minimum RTT {test_latency}ms exceeds allowed latency {min_latency:.3f}ms.')
@@ -102,13 +101,13 @@ class WebRequestHandler(BaseHTTPRequestHandler):
 
     def _included(self, address, networks: set):
         if len(networks) == 0:
-            log.warning(f'Skipping inclusion test for {address}.')
+            log.warning(f'Skipping inclusion test for {address} due to missing header(s) {HEADER_ROUTE_INCLUDE_CSV} or {HEADER_ROUTE_EXCLUDE_CSV}.')
             return None
         for n in networks:
             if ipaddress.ip_address(address) in ipaddress.ip_network(n):
-                log.info(f'{address} is in {networks!s}.')
+                log.debug(f'{address} is in {networks!s}.')
                 return True
-        log.info(f'{address} is missing from {networks!s}.')
+        log.debug(f'{address} is missing from {networks!s}.')
         return False
 
     def do_GET(self):
@@ -156,7 +155,7 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                             forbidden_hosts.append(hop.address)
                     error_reason = ''
                     if len(missing_hosts) > 0:
-                        error_reason += f'Hosts missing from route: {missing_hosts!s}. '
+                        error_reason += f'Hosts missing from route: {list(missing_hosts)!s}. '
                     if len(forbidden_hosts) > 0:
                         error_reason += f'Hosts forbidden from route: {forbidden_hosts!s}. '
                     if hop:
