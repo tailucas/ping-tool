@@ -1,0 +1,16 @@
+[Unit]
+Description=Ping Tool for Health Checks
+After=network.target tailscaled.service
+AssertPathExists=/home/tai/ping-tool
+
+[Install]
+WantedBy=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/home/tai/.local/bin/poetry run app
+WorkingDirectory=/home/tai/ping-tool
+Restart=always
+RestartSec=30
+SyslogIdentifier=%n
+
