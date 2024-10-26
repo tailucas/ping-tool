@@ -86,7 +86,7 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                 case '/ping':
                     host: Host = ping(address=host_name, count=3, interval=1, source=source, privileged=False)
                     if source:
-                        log.info(f'Ping {host_name} from {source} ({host.address})...')
+                        log.info(f'Ping {host_name} from {source}...')
                     else:
                         log.warning(f'Ping {host_name} (no source address header {HEADER_SOURCE} specified)...')
                     log.info(f'{host_name} ({host.address}) is alive? {host.is_alive} ' \
