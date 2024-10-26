@@ -6,12 +6,16 @@ version = "3.0.4"
 description = "Easily forge ICMP packets and make your own ping and traceroute."
 optional = false
 python-versions = ">=3.7"
-files = [
-    {file = "icmplib-3.0.4-py3-none-any.whl", hash = "sha256:336b75c6c23c5ce99ddec33f718fab09661f6ad698e35b6f1fc7cc0ecf809398"},
-    {file = "icmplib-3.0.4.tar.gz", hash = "sha256:57868f2cdb011418c0e1d5586b16d1fabd206569fe9652654c27b6b2d6a316de"},
-]
+files = []
+develop = false
+
+[package.source]
+type = "git"
+url = "https://github.com/tglucas/icmplib.git"
+reference = "HEAD"
+resolved_reference = "83a7151bd910485fb8d73511ab69ed3576ab4d21"
 
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "f60cd69acc86e1e4f2be4501178f5b9389bb9656c4d0de3aa6b5fc18f02cc0cc"
+content-hash = "c3c9e8b91b7bb0149fc41c6267124c8362184e538b5e161fdbe855c867add182"

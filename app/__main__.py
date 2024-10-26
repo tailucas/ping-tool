@@ -48,6 +48,11 @@ if log_handler:
     log.addHandler(log_handler)
 
 
+HEADER_HOST = 'Host'
+HEADER_SOURCE = 'Source'
+HEADER_MIN_LATENCY_MS = 'MinLatencyMs'
+
+
 class WebRequestHandler(BaseHTTPRequestHandler):
     @cached_property
     def url(self):
@@ -71,24 +76,25 @@ class WebRequestHandler(BaseHTTPRequestHandler):
         return SimpleCookie(self.headers.get("Cookie"))
 
     def do_GET(self):
+        self.protocol_version = 'HTTP/1.0'
         log.info(f'GET {self.path} - headers {self.headers.keys()}')
         response = {'result': 'OK'}
         try:
-            host_name = self.headers.get('Host')
+            host_name = self.headers.get(HEADER_HOST)
+            source = self.headers.get(HEADER_SOURCE)
             match self.path:
                 case '/ping':
-                    source_ip = self.headers.get('SourceIP')
-                    if source_ip:
-                        log.info(f'Ping {host_name} from {source_ip}...')
+                    host: Host = ping(address=host_name, count=3, interval=1, source=source, privileged=False)
+                    if source:
+                        log.info(f'Ping {host_name} from {source} ({host.address})...')
                     else:
-                        log.warning(f'Ping {host_name} without source IP...')
-                    host: Host = ping(address=host_name, count=3, interval=1, source=source_ip, privileged=False)
+                        log.warning(f'Ping {host_name} (no source address header {HEADER_SOURCE} specified)...')
                     log.info(f'{host_name} ({host.address}) is alive? {host.is_alive} ' \
                         f'with round-trips of {host.packets_sent} packets ' \
                         f'(min: {host.min_rtt}, avg: {host.avg_rtt}, max: {host.max_rtt}, jitter: {host.jitter}) ' \
                         f'and loss {host.packet_loss*100}%.')
                     response[self.path[1:]] = f'{host!s}'
-                    min_latency_arg = self.headers.get('MinLatencyMs')
+                    min_latency_arg = self.headers.get(HEADER_MIN_LATENCY_MS)
                     if min_latency_arg:
                         min_latency = float(min_latency_arg)
                         if host.min_rtt < min_latency:
@@ -100,14 +106,19 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                             log.info(f'Minimum RTT {host.min_rtt}ms exceeds allowed latency {min_latency:.3f}ms.')
                             self.send_response(200)
                     else:
-                        log.warning(f'Not enforcing latency expectations.')
+                        log.warning(f'Not enforcing latency expectations due to missing header {HEADER_MIN_LATENCY_MS}.')
                         self.send_response(200)
                 case '/traceroute':
-                    log.info(f'Traceroute to {host_name}.')
-                    hops: List[Hop] = traceroute(address=host_name, count=1)
+                    log.info(f'Traceroute to {host_name}...')
+                    hops: List[Hop] = traceroute(address=host_name, count=1, source=source)
+                    hop_count = 0
                     hop: Hop
                     for hop in hops:
-                        log.info(f'{hop!s}')
+                        hop_count += 1
+                        log.info(f'Hop {hop_count} to {hop.address} is alive? {hop.is_alive} ' \
+                            f'with round-trips of {hop.packets_sent} packets ' \
+                            f'(min: {hop.min_rtt}, avg: {hop.avg_rtt}, max: {hop.max_rtt}, jitter: {hop.jitter}) ' \
+                            f'and loss {hop.packet_loss*100}%.')
                 case _:
                     self.send_response(200)
         except Exception as e:
@@ -115,9 +126,11 @@ class WebRequestHandler(BaseHTTPRequestHandler):
             self.send_response(500)
             response = {'result': 'error', 'reason': f'{e!s}'}
         self.send_header("Content-Type", "application/json")
-        self.end_headers()
         json_response = json.dumps(response)
-        self.wfile.write(bytes(json_response, 'utf-8'))
+        wire_response = bytes(json_response, 'utf-8')
+        self.send_header("Content-length", len(wire_response))
+        self.end_headers()
+        self.wfile.write(wire_response)
 
 
 def run_server(address, port):
