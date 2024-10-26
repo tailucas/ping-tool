@@ -107,7 +107,7 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                         f'with round-trips of {host.packets_sent} packets ' \
                         f'(min: {host.min_rtt}, avg: {host.avg_rtt}, max: {host.max_rtt}, jitter: {host.jitter}) ' \
                         f'and loss {host.packet_loss*100}%.')
-                    response[self.path[1:]] = f'{host!s}'
+                    response[self.path[1:]] = {'host': host.address, 'rtts': host.rtts}
                     min_latency_arg = self.headers.get(HEADER_MIN_LATENCY_MS)
                     if min_latency_arg:
                         min_latency = float(min_latency_arg)
@@ -124,10 +124,9 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                     log.info(f'Traceroute to {host_name}...')
                     hops: List[Hop] = traceroute(address=host_name, count=1, source=source)
                     hop_count = 0
-                    hop: Hop
-                    last_min_rtt = 0
                     missing_hosts = []
                     forbidden_hosts = []
+                    hop: Hop = None
                     for hop in hops:
                         hop_count += 1
                         log.info(f'Hop {hop_count} to {hop.address} is alive? {hop.is_alive} ' \
@@ -144,21 +143,21 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                                 if ipaddress.ip_address(hop.address) in ipaddress.ip_network(n):
                                     log.warning(f'{hop.address} found in route but in exclusion list {route_must_exclude!s}')
                                     forbidden_hosts.append(hop.address)
-                        last_min_rtt = hop.min_rtt
                     error_reason = ''
                     if len(missing_hosts) > 0 or len(forbidden_hosts) > 0:
                         if len(missing_hosts) > 0:
                             error_reason += f'Hosts missing from route: {missing_hosts!s}. '
                         if len(forbidden_hosts) > 0:
                             error_reason += f'Hosts forbidden from route: {forbidden_hosts!s}. '
-                        test_ok = False
-                    min_latency_arg = self.headers.get(HEADER_MIN_LATENCY_MS)
-                    if min_latency_arg:
-                        min_latency = float(min_latency_arg)
-                        if last_min_rtt < min_latency:
-                            error_reason += f'Minimum RTT {host.min_rtt}ms is less than minimum allowed {min_latency:.3f}ms. '
-                            test_ok = False
+                    if hop:
+                        min_latency_arg = self.headers.get(HEADER_MIN_LATENCY_MS)
+                        response[self.path[1:]] = {'host': hop.address, 'rtts': hop.rtts}
+                        if min_latency_arg:
+                            min_latency = float(min_latency_arg)
+                            if hop.min_rtt < min_latency:
+                                error_reason += f'Minimum RTT {hop.min_rtt}ms is less than minimum allowed {min_latency:.3f}ms. '
                     if len(error_reason) > 0:
+                        test_ok = False
                         log.info(error_reason)
                         response = {'result': 'error', 'reason': error_reason.rstrip()}
                 case _:
