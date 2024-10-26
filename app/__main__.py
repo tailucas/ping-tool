@@ -78,6 +78,39 @@ class WebRequestHandler(BaseHTTPRequestHandler):
     def cookies(self):
         return SimpleCookie(self.headers.get("Cookie"))
 
+    def _split_to_set(self, header_name):
+        my_set = set()
+        header_csv = self.headers.get(header_name)
+        if header_csv:
+            for h in header_csv.split(','):
+                my_set.add(h)
+        return my_set
+
+    def _check_latency(self, test_latency):
+        min_latency_arg = self.headers.get(HEADER_MIN_LATENCY_MS)
+        if min_latency_arg:
+            min_latency = float(min_latency_arg)
+            if test_latency < min_latency:
+                error_reason = f'Minimum RTT {test_latency}ms is less than minimum allowed {min_latency:.3f}ms.'
+                log.info(error_reason)
+                return {'result': 'error', 'reason': error_reason}
+            else:
+                log.info(f'Minimum RTT {test_latency}ms exceeds allowed latency {min_latency:.3f}ms.')
+        else:
+            log.warning(f'Not enforcing latency expectations due to missing header {HEADER_MIN_LATENCY_MS}.')
+        return None
+
+    def _included(self, address, networks: set):
+        if len(networks) == 0:
+            log.warning(f'Skipping inclusion test for {address}.')
+            return None
+        for n in networks:
+            if ipaddress.ip_address(address) in ipaddress.ip_network(n):
+                log.info(f'{address} is in {networks!s}.')
+                return True
+        log.info(f'{address} is missing from {networks!s}.')
+        return False
+
     def do_GET(self):
         self.protocol_version = 'HTTP/1.0'
         log.info(f'GET {self.path} - headers {self.headers.keys()}')
@@ -85,16 +118,8 @@ class WebRequestHandler(BaseHTTPRequestHandler):
         try:
             host_name = self.headers.get(HEADER_HOST)
             source = self.headers.get(HEADER_SOURCE)
-            route_must_include = set()
-            route_include_csv = self.headers.get(HEADER_ROUTE_INCLUDE_CSV)
-            if route_include_csv:
-                for h in route_include_csv.split(','):
-                    route_must_include.add(h)
-            route_must_exclude = set()
-            route_exclude_csv = self.headers.get(HEADER_ROUTE_EXCLUDE_CSV)
-            if route_exclude_csv:
-                for h in route_exclude_csv:
-                    route_must_exclude.add(h)
+            route_must_include = self._split_to_set(HEADER_ROUTE_INCLUDE_CSV)
+            route_must_exclude = self._split_to_set(HEADER_ROUTE_EXCLUDE_CSV)
             test_ok = True
             match self.path:
                 case '/ping':
@@ -108,23 +133,15 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                         f'(min: {host.min_rtt}, avg: {host.avg_rtt}, max: {host.max_rtt}, jitter: {host.jitter}) ' \
                         f'and loss {host.packet_loss*100}%.')
                     response[self.path[1:]] = {'host': host.address, 'rtts': host.rtts}
-                    min_latency_arg = self.headers.get(HEADER_MIN_LATENCY_MS)
-                    if min_latency_arg:
-                        min_latency = float(min_latency_arg)
-                        if host.min_rtt < min_latency:
-                            error_reason = f'Minimum RTT {host.min_rtt}ms is less than minimum allowed {min_latency:.3f}ms.'
-                            log.info(error_reason)
-                            response = {'result': 'error', 'reason': error_reason}
-                            test_ok = False
-                        else:
-                            log.info(f'Minimum RTT {host.min_rtt}ms exceeds allowed latency {min_latency:.3f}ms.')
-                    else:
-                        log.warning(f'Not enforcing latency expectations due to missing header {HEADER_MIN_LATENCY_MS}.')
+                    failure = self._check_latency(test_latency=host.min_rtt)
+                    if failure:
+                        response = failure
+                        test_ok = False
                 case '/traceroute':
                     log.info(f'Traceroute to {host_name}...')
                     hops: List[Hop] = traceroute(address=host_name, count=1, source=source)
                     hop_count = 0
-                    missing_hosts = []
+                    missing_hosts: set = route_must_include.copy()
                     forbidden_hosts = []
                     hop: Hop = None
                     for hop in hops:
@@ -133,29 +150,20 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                             f'with round-trips of {hop.packets_sent} packets ' \
                             f'(min: {hop.min_rtt}, avg: {hop.avg_rtt}, max: {hop.max_rtt}, jitter: {hop.jitter}) ' \
                             f'and loss {hop.packet_loss*100}%.')
-                        if len(route_must_include) > 0:
-                            for n in route_must_include:
-                                if ipaddress.ip_address(hop.address) not in ipaddress.ip_network(n):
-                                    log.warning(f'{hop.address} expected but not found in {route_must_exclude!s}.')
-                                    missing_hosts.append(hop.address)
-                        if len(route_must_exclude) > 0:
-                            for n in route_must_exclude:
-                                if ipaddress.ip_address(hop.address) in ipaddress.ip_network(n):
-                                    log.warning(f'{hop.address} found in route but in exclusion list {route_must_exclude!s}')
-                                    forbidden_hosts.append(hop.address)
+                        if self._included(address=hop.address, networks=route_must_include):
+                            missing_hosts.remove(hop.address)
+                        if self._included(address=hop.address, networks=route_must_exclude):
+                            forbidden_hosts.append(hop.address)
                     error_reason = ''
-                    if len(missing_hosts) > 0 or len(forbidden_hosts) > 0:
-                        if len(missing_hosts) > 0:
-                            error_reason += f'Hosts missing from route: {missing_hosts!s}. '
-                        if len(forbidden_hosts) > 0:
-                            error_reason += f'Hosts forbidden from route: {forbidden_hosts!s}. '
+                    if len(missing_hosts) > 0:
+                        error_reason += f'Hosts missing from route: {missing_hosts!s}. '
+                    if len(forbidden_hosts) > 0:
+                        error_reason += f'Hosts forbidden from route: {forbidden_hosts!s}. '
                     if hop:
-                        min_latency_arg = self.headers.get(HEADER_MIN_LATENCY_MS)
                         response[self.path[1:]] = {'host': hop.address, 'rtts': hop.rtts}
-                        if min_latency_arg:
-                            min_latency = float(min_latency_arg)
-                            if hop.min_rtt < min_latency:
-                                error_reason += f'Minimum RTT {hop.min_rtt}ms is less than minimum allowed {min_latency:.3f}ms. '
+                        failure = self._check_latency(test_latency=hop.min_rtt)
+                        if failure:
+                            error_reason += failure['reason']
                     if len(error_reason) > 0:
                         test_ok = False
                         log.info(error_reason)
