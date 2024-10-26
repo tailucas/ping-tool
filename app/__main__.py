@@ -154,7 +154,10 @@ def main():
     log.info(f'Listening on {server_address}:{server_port}.')
     thread = Thread(target=run_server, name='Server', args=(server_address, server_port))
     thread.start()
-    thread.join()
+    try:
+        thread.join()
+    except KeyboardInterrupt:
+        pass
     log.info('Shutting down...')
 
 
