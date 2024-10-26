@@ -2,6 +2,7 @@
 import json
 import logging
 import logging.handlers
+import ipaddress
 import os
 import signal
 import socket
@@ -51,6 +52,8 @@ if log_handler:
 HEADER_HOST = 'Host'
 HEADER_SOURCE = 'Source'
 HEADER_MIN_LATENCY_MS = 'MinLatencyMs'
+HEADER_ROUTE_INCLUDE_CSV = 'RouteIncludeCsv'
+HEADER_ROUTE_EXCLUDE_CSV = 'RouteExcludeCsv'
 
 
 class WebRequestHandler(BaseHTTPRequestHandler):
@@ -82,6 +85,17 @@ class WebRequestHandler(BaseHTTPRequestHandler):
         try:
             host_name = self.headers.get(HEADER_HOST)
             source = self.headers.get(HEADER_SOURCE)
+            route_must_include = set()
+            route_include_csv = self.headers.get(HEADER_ROUTE_INCLUDE_CSV)
+            if route_include_csv:
+                for h in route_include_csv.split(','):
+                    route_must_include.add(h)
+            route_must_exclude = set()
+            route_exclude_csv = self.headers.get(HEADER_ROUTE_EXCLUDE_CSV)
+            if route_exclude_csv:
+                for h in route_exclude_csv:
+                    route_must_exclude.add(h)
+            test_ok = True
             match self.path:
                 case '/ping':
                     host: Host = ping(address=host_name, count=3, interval=1, source=source, privileged=False)
@@ -101,30 +115,62 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                             error_reason = f'Minimum RTT {host.min_rtt}ms is less than minimum allowed {min_latency:.3f}ms.'
                             log.info(error_reason)
                             response = {'result': 'error', 'reason': error_reason}
-                            self.send_response(500)
+                            test_ok = False
                         else:
                             log.info(f'Minimum RTT {host.min_rtt}ms exceeds allowed latency {min_latency:.3f}ms.')
-                            self.send_response(200)
                     else:
                         log.warning(f'Not enforcing latency expectations due to missing header {HEADER_MIN_LATENCY_MS}.')
-                        self.send_response(200)
                 case '/traceroute':
                     log.info(f'Traceroute to {host_name}...')
                     hops: List[Hop] = traceroute(address=host_name, count=1, source=source)
                     hop_count = 0
                     hop: Hop
+                    last_min_rtt = 0
+                    missing_hosts = []
+                    forbidden_hosts = []
                     for hop in hops:
                         hop_count += 1
                         log.info(f'Hop {hop_count} to {hop.address} is alive? {hop.is_alive} ' \
                             f'with round-trips of {hop.packets_sent} packets ' \
                             f'(min: {hop.min_rtt}, avg: {hop.avg_rtt}, max: {hop.max_rtt}, jitter: {hop.jitter}) ' \
                             f'and loss {hop.packet_loss*100}%.')
+                        if len(route_must_include) > 0:
+                            for n in route_must_include:
+                                if ipaddress.ip_address(hop.address) not in ipaddress.ip_network(n):
+                                    log.warning(f'{hop.address} expected but not found in {route_must_exclude!s}.')
+                                    missing_hosts.append(hop.address)
+                        if len(route_must_exclude) > 0:
+                            for n in route_must_exclude:
+                                if ipaddress.ip_address(hop.address) in ipaddress.ip_network(n):
+                                    log.warning(f'{hop.address} found in route but in exclusion list {route_must_exclude!s}')
+                                    forbidden_hosts.append(hop.address)
+                        last_min_rtt = hop.min_rtt
+                    error_reason = ''
+                    if len(missing_hosts) > 0 or len(forbidden_hosts) > 0:
+                        if len(missing_hosts) > 0:
+                            error_reason += f'Hosts missing from route: {missing_hosts!s}. '
+                        if len(forbidden_hosts) > 0:
+                            error_reason += f'Hosts forbidden from route: {forbidden_hosts!s}. '
+                        test_ok = False
+                    min_latency_arg = self.headers.get(HEADER_MIN_LATENCY_MS)
+                    if min_latency_arg:
+                        min_latency = float(min_latency_arg)
+                        if last_min_rtt < min_latency:
+                            error_reason += f'Minimum RTT {host.min_rtt}ms is less than minimum allowed {min_latency:.3f}ms. '
+                            test_ok = False
+                    if len(error_reason) > 0:
+                        log.info(error_reason)
+                        response = {'result': 'error', 'reason': error_reason.rstrip()}
                 case _:
-                    self.send_response(200)
+                    log.warning(f'No test selected from path {self.path}')
         except Exception as e:
             log.exception('Issue processing command.')
-            self.send_response(500)
             response = {'result': 'error', 'reason': f'{e!s}'}
+            test_ok = False
+        if test_ok:
+            self.send_response(200)
+        else:
+            self.send_response(500)
         self.send_header("Content-Type", "application/json")
         json_response = json.dumps(response)
         wire_response = bytes(json_response, 'utf-8')
