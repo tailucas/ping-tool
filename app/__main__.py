@@ -4,6 +4,9 @@ import logging
 import logging.handlers
 import ipaddress
 import os
+import requests
+from requests import Response
+from requests.exceptions import RequestException
 import signal
 import socket
 import sys
@@ -49,11 +52,39 @@ if log_handler:
     log.addHandler(log_handler)
 
 
+OS_ENV_IPINFO_TOKEN = 'IPINFO_TOKEN'
+
+
 HEADER_HOST = 'Host'
 HEADER_SOURCE = 'Source'
 HEADER_MIN_LATENCY_MS = 'MinLatencyMs'
 HEADER_ROUTE_INCLUDE_CSV = 'RouteIncludeCsv'
 HEADER_ROUTE_EXCLUDE_CSV = 'RouteExcludeCsv'
+HEADER_HOPS_MUST_INCLUDE_ORG_CSV = 'HopsMustIncludeOrg'
+HEADER_HOPS_MUST_EXCLUDE_ORG_CSV = 'HopsMustExcludeOrg'
+
+
+def get_ip_org(ip):
+    ipinfo_token = None
+    try:
+        ipinfo_token = os.environ[OS_ENV_IPINFO_TOKEN]
+    except KeyError:
+        log.warning(f'No ipinfo token available. Set environment variable {OS_ENV_IPINFO_TOKEN}')
+        return None
+    headers = {
+        'Authorization': f'Bearer {ipinfo_token}',
+        'Accept': 'application/json'
+    }
+    r: Response = None
+    try:
+        r = requests.get(f'https://ipinfo.io/{ip}/org', headers=headers, timeout=3)
+    except RequestException:
+        log.warning(f'Cannot get information for IP {ip}.', exc_info=True)
+    if r:
+        org_name = r.text.rstrip()
+        if len(org_name) > 0:
+            org_name
+    return None
 
 
 class WebRequestHandler(BaseHTTPRequestHandler):
@@ -99,7 +130,7 @@ class WebRequestHandler(BaseHTTPRequestHandler):
             log.warning(f'Not enforcing latency expectations due to missing header {HEADER_MIN_LATENCY_MS}.')
         return None
 
-    def _included(self, address, networks: set):
+    def _included_net(self, address, networks: set):
         if len(networks) == 0:
             log.warning(f'Skipping inclusion test for {address} due to missing header(s) {HEADER_ROUTE_INCLUDE_CSV} or {HEADER_ROUTE_EXCLUDE_CSV}.')
             return None
@@ -110,6 +141,16 @@ class WebRequestHandler(BaseHTTPRequestHandler):
         log.debug(f'{address} is missing from {networks!s}.')
         return False
 
+    def _included_org(self, org: str, orgs: set):
+        if len(orgs) == 0:
+            log.warning(f'Skipping inclusion test for {org} due to missing header(s) {HEADER_HOPS_MUST_INCLUDE_ORG_CSV} or {HEADER_HOPS_MUST_EXCLUDE_ORG_CSV}.')
+            return None
+        for o in orgs:
+            if o.lower() in org.lower():
+                return o
+        log.debug(f'{org} is not in orgs {orgs}.')
+        return None
+
     def do_GET(self):
         self.protocol_version = 'HTTP/1.0'
         log.info(f'GET {self.path} - headers {self.headers.keys()}')
@@ -119,6 +160,8 @@ class WebRequestHandler(BaseHTTPRequestHandler):
             source = self.headers.get(HEADER_SOURCE)
             route_must_include = self._split_to_set(HEADER_ROUTE_INCLUDE_CSV)
             route_must_exclude = self._split_to_set(HEADER_ROUTE_EXCLUDE_CSV)
+            hops_must_include_org = self._split_to_set(HEADER_HOPS_MUST_INCLUDE_ORG_CSV)
+            hops_must_exclude_org = self._split_to_set(HEADER_HOPS_MUST_EXCLUDE_ORG_CSV)
             test_ok = True
             match self.path:
                 case '/ping':
@@ -131,6 +174,9 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                         f'with round-trips of {host.packets_sent} packets ' \
                         f'(min: {host.min_rtt}, avg: {host.avg_rtt}, max: {host.max_rtt}, jitter: {host.jitter}) ' \
                         f'and loss {host.packet_loss*100}%.')
+                    ip_org = get_ip_org(ip=host.address)
+                    if ip_org:
+                        log.info(f'{host_name} ({host.address}) is owned by {ip_org}.')
                     response[self.path[1:]] = {'host': host.address, 'rtts': host.rtts}
                     failure = self._check_latency(test_latency=host.min_rtt)
                     if failure:
@@ -141,7 +187,9 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                     hops: List[Hop] = traceroute(address=host_name, count=1, source=source)
                     hop_count = 0
                     missing_hosts: set = route_must_include.copy()
+                    missing_orgs: set = hops_must_include_org.copy()
                     forbidden_hosts = []
+                    forbidden_orgs = []
                     hop: Hop = None
                     for hop in hops:
                         hop_count += 1
@@ -149,15 +197,35 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                             f'with round-trips of {hop.packets_sent} packets ' \
                             f'(min: {hop.min_rtt}, avg: {hop.avg_rtt}, max: {hop.max_rtt}, jitter: {hop.jitter}) ' \
                             f'and loss {hop.packet_loss*100}%.')
-                        if self._included(address=hop.address, networks=route_must_include):
-                            missing_hosts.remove(hop.address)
-                        if self._included(address=hop.address, networks=route_must_exclude):
+                        if self._included_net(address=hop.address, networks=route_must_include):
+                            try:
+                                missing_hosts.remove(hop.address)
+                            except KeyError:
+                                # don't care, tested later
+                                pass
+                        if self._included_net(address=hop.address, networks=route_must_exclude):
                             forbidden_hosts.append(hop.address)
+                        ip_org = get_ip_org(ip=hop.address)
+                        if ip_org:
+                            log.info(f'{hop.address} is owned by {ip_org}.')
+                            org_included = self._included_org(org=ip_org, orgs=hops_must_include_org)
+                            if org_included:
+                                try:
+                                    missing_orgs.remove(org_included)
+                                except KeyError:
+                                    # don't care, tested later
+                                    pass
+                            if self._included_org(org=ip_org, orgs=hops_must_exclude_org):
+                                forbidden_hosts.append(ip_org)
                     error_reason = ''
                     if len(missing_hosts) > 0:
                         error_reason += f'Hosts missing from route: {list(missing_hosts)!s}. '
+                    if len(missing_orgs) > 0:
+                        error_reason += f'Orgs missing from route: {list(missing_orgs)!s}. '
                     if len(forbidden_hosts) > 0:
                         error_reason += f'Hosts forbidden from route: {forbidden_hosts!s}. '
+                    if len(forbidden_orgs) > 0:
+                        error_reason += f'Orgs forbidden from route: {forbidden_orgs!s}. '
                     if hop:
                         response[self.path[1:]] = {'host': hop.address, 'rtts': hop.rtts}
                         failure = self._check_latency(test_latency=hop.min_rtt)

@@ -12,6 +12,7 @@ app = "app.__main__:main"
 [tool.poetry.dependencies]
 python = "^3.11"
 icmplib = {git = "https://github.com/tglucas/icmplib.git"}
+requests = "^2.32.3"
 
 [build-system]
 requires = ["poetry-core"]
