@@ -145,18 +145,17 @@ SERVER_ADDRESS="0.0.0.0"
 SERVER_PORT="8080"
 APP_NAME="ping-tool"
 ```
-3. Let `uv` create the Python virtual environment in the project directory and install the application exactly as pinned by `uv.lock`. `.python-version` pins the interpreter to 3.11, which is what the SBC runs.
+3. Let `uv` create the Python virtual environment in the project directory, install exactly what `uv.lock` pins (runtime dependencies only — the SBC does not run the tests), and render the systemd unit for this checkout. `.python-version` pins the interpreter to 3.11, which is what the SBC runs.
 ```sh
-uv sync --frozen --no-dev
+make setup               # uv python install + uv sync --frozen --no-dev + make unit
 ```
-4. To run and auto-start the application, install the systemd unit straight from the checkout. `ping-tool.service.in` is a template: `make unit` renders it with the absolute path of this clone plus the runtime contract (`APP_NAME`, `SERVER_ADDRESS`, `SERVER_PORT`) taken from the Makefile, so there is nothing to hand-edit. The installed unit also reads the optional `.env` (that is where `IPINFO_TOKEN` belongs) and starts the `app` console script from `.venv` directly. Note that elevated privileges are needed by `icmplib` in order to perform `traceroute` functions.
+4. To run and auto-start the application, install the systemd unit straight from the checkout. `ping-tool.service.in` is a template: `make unit` (part of `make setup`) renders it with the absolute path of this clone plus the runtime contract (`APP_NAME`, `SERVER_ADDRESS`, `SERVER_PORT`) taken from the Makefile, so there is nothing to hand-edit. The installed unit also reads the optional `.env` (that is where `IPINFO_TOKEN` belongs) and starts the `app` console script from `.venv` directly. Note that elevated privileges are needed by `icmplib` in order to perform `traceroute` functions.
 ```sh
-make unit                # render build/ping-tool.service for this checkout
 make install-unit        # install + daemon-reload + enable + restart
 make status              # unit state and whether port 8080 is listening
 make logs                # journalctl -f -u ping-tool
 ```
-Run `make install-unit` as your normal user (it escalates only for the install and `systemctl` steps) so `build/` and `.venv` stay owned by you. `make uninstall-unit` stops and disables the service, then removes the installed unit plus any `ping-tool.service.d/` drop-ins and reloads systemd.
+Run `make install-unit` as your normal user (it escalates only for the install and `systemctl` steps) so `build/` and `.venv` stay owned by you. It installs a file and restarts the service only — it never downloads anything, so it works with the uplink down; it just needs `.venv/bin/app` from step 3. `make uninstall-unit` stops and disables the service, then removes the installed unit plus any `ping-tool.service.d/` drop-ins and reloads systemd.
 
 ### Common Commands
 
@@ -165,7 +164,8 @@ Everything about building, running and testing the project lives in the `Makefil
 | Command | Purpose |
 | --- | --- |
 | `make` / `make help` | List every target with a one-line description. |
-| `make sync` | `uv sync --frozen` — install exactly what `uv.lock` resolved into `.venv`. |
+| `make setup` | Host setup in one step: interpreter, runtime dependencies and the rendered unit. |
+| `make sync` / `make sync-prod` | Install the locked closure **with** / **without** the dev group (pytest). |
 | `make test` | Run the test suite (offline; ICMP is mocked). |
 | `make verify` | Fast gate: lockfile agrees, tests pass, sources compile. |
 | `make lock` / `make upgrade` | Re-resolve `uv.lock` / refresh it to the newest allowed versions. |

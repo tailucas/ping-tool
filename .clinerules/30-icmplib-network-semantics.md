@@ -41,6 +41,13 @@ So the *same* physical condition ("this circuit carries no traffic") surfaces as
 different results depending on which path DNS happened to use. Any fix must treat DNS
 as its own sub-check and must not conflate it with interface state.
 
+On this host that resolver is Tailscale MagicDNS, which forwards to **NextDNS over
+DoH** (`tailscale dns query <name>` prints the resolver URL). Cold lookups measure
+~1 s and Fastly's A records carry a 60 s TTL, so the Pi re-resolves constantly.
+Resolver latency and resolver failure are therefore a first-class part of a probe's
+timing and outcome — but never part of the ICMP verdict, and never evidence about the
+circuit under test.
+
 Practical rules:
 
 - Resolve explicitly, then report `dns_ok` / `dns_error` separately from the ICMP result.

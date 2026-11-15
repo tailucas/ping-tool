@@ -29,7 +29,7 @@ placeholders are self-describing: `<backup-gateway>`, `<host-lan-ip>`, `<home>`,
 | `.python-version` | Pins the interpreter to **3.11**, matching the SBC. |
 | `tests/` | `pytest` suite for the handler, helpers and IPinfo enrichment. |
 | `ping-tool.service.in` | systemd unit **template**; `make unit` renders it for the checkout and `make install-unit` installs it to `/etc/systemd/system/`. |
-| `Makefile` | The **only** task runner: dev container, `uv` sync/lock/test/verify, and container `configure`/`build`/`run`/`connect`. `make help` is authoritative. |
+| `Makefile` | The **only** task runner: dev container, `uv` sync/sync-prod/setup/lock/test/verify, and container `configure`/`build`/`run`/`connect` plus `unit`/`install-unit`. `make help` is authoritative. |
 | `docker-compose.template`, `Dockerfile`, `app_entrypoint.sh`, `.dockerignore` | Container build/run path (secondary; production is a venv + systemd). |
 | `config/app.conf` | Tiny templated config for the container base image, **not read by the Python code**. |
 | `config_interpol`, `yaml_interpol`, `cred_tool`, `make-app-user.sh`, `connect_to_app.sh` | Helper scripts inherited from the base-app template; do not "fix" them as part of app work. |

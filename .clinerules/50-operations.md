@@ -7,14 +7,18 @@
 - Unit `/etc/systemd/system/ping-tool.service`, `Restart=always`, `RestartSec=30`,
   `After=network.target tailscaled.service`.
 - `ExecStart=<app-dir>/.venv/bin/app`, `WorkingDirectory=<app-dir>`. The venv is
-  provisioned by `make sync` (`uv sync --frozen --no-dev`); `uv` is not in the
-  service's process tree or signal path.
+  provisioned by `make setup` / `make sync-prod` (`uv sync --frozen --no-dev`);
+  `uv` is not in the service's process tree or signal path.
 - The unit is **generated, never hand-edited**: `ping-tool.service.in` is rendered
   by `make unit` into `build/ping-tool.service` with `APP_DIR=$(CURDIR)` and the
   `APP_NAME`/`SERVER_ADDRESS`/`SERVER_PORT` contract from the Makefile, then
   installed with `make install-unit` (install + `daemon-reload` + `enable` +
   `restart`, then `is-active`). Run it as the normal user — the recipe escalates
   only for those steps — so `build/` and `.venv` stay owned by you.
+- `make install-unit` **never touches the network**: it only requires
+  `<app-dir>/.venv/bin/app` and says so if it is missing. Dependency syncing is
+  `make sync`, which is the one step that needs DNS and PyPI — keep them separate
+  so the unit can be installed or repaired while the uplink is degraded.
 - The rendered unit reads `<app-dir>/.env` as an optional `EnvironmentFile`; that
   is how `IPINFO_TOKEN` and other optional settings reach the service. A missing
   file is fine, the mandatory variables are baked into `Environment=`.
@@ -59,6 +63,9 @@ sudo systemctl restart ping-tool
 sudo journalctl -u ping-tool -n 20 --no-pager
 ```
 
+`make setup` is the host-side equivalent of the uv line plus the unit render, and
+`make install-unit` then reloads systemd, re-enables and restarts the service.
+
 Then verify from the home network that the probe endpoint answers, e.g.
 
 ```bash
@@ -70,6 +77,12 @@ If `ping-tool.service.in` or the Makefile's `APP_NAME`/`SERVER_*` values changed
 `make install-unit` is the deploy step instead: it re-renders the unit, installs
 it, reloads systemd, re-enables and restarts the service. `make status` and
 `make logs` cover the checks above.
+
+`uv sync` is the **only** network-dependent step. When the uplink is degraded
+(e.g. the mobile circuit is up but carries nothing), install the unit first with
+`make install-unit` — it is offline-safe — and sync later. With the required
+wheels/sdists already in `~/.cache/uv` *for this platform*, `uv sync --frozen
+--offline` makes the dependency step fail fast instead of hanging on DNS.
 
 To replace a **hand-edited** unit (or one with a `ping-tool.service.d/` drop-in)
 with the generated one, remove it first, then install:
@@ -88,6 +101,37 @@ removal (`journalctl -u ping-tool` still shows it).
 
 Do not restart the service to "test" a change; use the throwaway instance recipe in
 `40-validation.md`.
+
+## Package downloads (uv) on the SBC
+
+`uv` for `armv6l` is a **statically linked musl** binary, so it uses musl's stub
+resolver rather than glibc/NSS: it reads `/etc/resolv.conf` directly, sends no
+EDNS0 (answers over 512 bytes come back truncated and must be retried over TCP),
+and reports any temporary failure as `EAI_AGAIN` ("Try again"). `curl`, `ping`,
+`getent` and `python3` are glibc binaries and can therefore succeed while `uv`
+fails. That asymmetry is a client-side difference, **not** uv choosing an
+interface: uv has no device binding, so routing is always the kernel's.
+
+When `uv sync` fails with `dns error` / `failed to lookup address information:
+Try again` while `ping <host>`, `getent hosts <host>` and `ip route get <ip>`
+all look healthy, check in this order:
+
+1. `dig +tcp @<resolver> <host>` — TCP/53 must work, or a truncated answer can
+   never be completed.
+2. `dig +noedns @<resolver> <host> A` and `... AAAA` — a record type that is
+   *silently dropped* (timeout) instead of answered with NODATA makes musl's
+   `getaddrinfo` fail outright. `dig +stats <host> | grep 'Query time'` is the
+   other half of this check: single-digit milliseconds is a healthy local
+   resolver, while ~1 s means MagicDNS is waiting on its upstream and musl's
+   fixed budget is the first thing to give out.
+3. `strace -f -tt -e trace=network uv sync --frozen`, or
+   `tcpdump -ni tailscale0 port 53`, run alongside it — shows whether the query
+   left the host and whether an answer came back inside musl's budget.
+4. `env | grep -iE 'proxy|^UV_'` and `grep -i proxy .env` — a proxy changes
+   which hostname is actually resolved.
+
+`make install-unit` is deliberately network-free, so the unit can be installed
+or repaired while this is being debugged; dependency syncing is `make sync`.
 
 ## Configuration and secrets
 

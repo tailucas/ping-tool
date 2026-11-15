@@ -31,8 +31,8 @@ CHECK_USER := vscode
 # Run tools from .venv without ever re-resolving: uv.lock is the source of truth.
 UV_RUN := uv run --frozen --no-sync
 
-.PHONY: help check dev-build dev-up dev python sync lock upgrade test verify \
-	docker datadir configure build push run rund connect clean \
+.PHONY: help check dev-build dev-up dev python sync sync-prod setup lock upgrade \
+	test verify docker datadir configure build push run rund connect clean \
 	unit install-unit uninstall-unit status logs
 
 # ---------- Dev container (host only) ----------
@@ -65,10 +65,21 @@ dev: dev-up ## Open a shell in the dev container
 
 python: .venv ## Set up the Python virtual environment (alias)
 
-sync: ## Install exactly the locked dependency closure into .venv
+sync: ## Install exactly the locked dependency closure, including the dev group
 	@uv -V || (echo "Needs uv, see $(UV_URL)"; exit 1)
+	uv python install
 	uv sync --frozen
 	@touch .venv
+
+sync-prod: ## Install the locked closure without the dev group (what the service runs)
+	@uv -V || (echo "Needs uv, see $(UV_URL)"; exit 1)
+	uv python install
+	uv sync --frozen --no-dev
+	@touch .venv
+
+setup: sync-prod unit ## Set up this checkout for the native service (deps + rendered unit)
+	@echo "Dependencies installed and build/$(UNIT_NAME) rendered."
+	@echo "Next: make install-unit (installs, enables and restarts the service)."
 
 lock: ## Re-resolve dependencies within the declared constraints and update uv.lock
 	uv lock
@@ -76,11 +87,13 @@ lock: ## Re-resolve dependencies within the declared constraints and update uv.l
 upgrade: ## Refresh uv.lock to the newest versions the constraints allow
 	uv lock --upgrade
 
-test: .venv ## Run the test suite (offline; ICMP is mocked)
+test: ## Run the test suite (offline; ICMP is mocked)
+	@uv sync --frozen            # no-op when satisfied; reinstates the dev group if needed
 	$(UV_RUN) pytest
 
-verify: .venv ## Fast gate: lockfile agrees, tests pass, sources compile
+verify: ## Fast gate: lockfile agrees, tests pass, sources compile
 	uv lock --check
+	@uv sync --frozen
 	$(UV_RUN) pytest
 	python3 -m compileall -q app tests
 
@@ -174,8 +187,9 @@ build/$(UNIT_NAME): $(UNIT_TEMPLATE) Makefile | build/
 
 unit: build/$(UNIT_NAME) ## Render the systemd unit for this checkout into build/
 
-install-unit: build/$(UNIT_NAME) sync ## Install, enable and (re)start the systemd unit (sudo)
+install-unit: build/$(UNIT_NAME) ## Install, enable and (re)start the systemd unit (sudo, offline-safe)
 	@test -d /run/systemd/system || (echo "systemd is not running here; run this on the host."; exit 1)
+	@test -x $(APP_DIR)/.venv/bin/app || (echo "$(APP_DIR)/.venv/bin/app is missing; run 'make sync' first (needs network)."; exit 1)
 	sudo install -m 0644 -o root -g root $< $(UNIT_PATH)
 	sudo systemctl daemon-reload
 	sudo systemctl enable $(UNIT_NAME)

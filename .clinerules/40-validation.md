@@ -45,7 +45,7 @@ Never experiment on port 8080. Start a second instance on a spare port:
 ```bash
 ssh <host>
 cd <app-dir>
-uv sync --frozen --no-dev
+make sync-prod
 APP_NAME=ping-tool-test SERVER_ADDRESS=127.0.0.1 SERVER_PORT=18080 \
   timeout 120 .venv/bin/python -m app >/tmp/pt-test.log 2>&1 &
 ```
