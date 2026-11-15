@@ -68,6 +68,31 @@ The above configuration will trigger 3 ICMP packets to be sent to the destinatio
 
 This configuration will trigger a `traceroute` to the destination, and for the destination hop enforce a minimum expected latency as with the ping test above using the header `MinLatencyMs`. `traceroute` offers additional information to validate the route. `RouteIncludeCsv` ensures that the route always contains the correct default gateway, and `RouteExcludeCsv` ensures that the fibre network gateway is not present in the route. `HopsMustIncludeOrg` ensures that the route must include the organization that owns the network (in this case the Mobile Network ISP) as specified by [IPinfo][ipinfo-url]. `HopsMustExcludeOrg` is the negative test, ensuring that the fibre network provider is not on the route, which obviously also influences the choice of the destination host. Luckily there's plenty out there.
 
+#### Response and status codes
+
+The HTTP status is the probe verdict; the JSON body carries the detail.
+
+| Status | Meaning |
+| --- | --- |
+| `200 OK` | The test passed: the circuit carried traffic and met the configured criteria. |
+| `503 Service Unavailable` | The circuit under test could not carry traffic, or carried it via the wrong path: no ICMP replies (for example an exhausted mobile data cap), a `/traceroute` route or org constraint that failed, or a minimum latency that was not met. |
+| `500 Internal Server Error` | `ping-tool` could not complete the test — an unexpected failure, or a destination name that could not be resolved. This is not a verdict about the circuit. |
+
+`500` is reserved for failures of the tool itself (including an unresolvable destination name), so an alert on `500` is always actionable. An unreachable destination that resolves is a *test result*, not a server error, and is reported as `503` with a reason.
+
+A passing ping:
+
+```json
+{"result": "OK", "ping": {"host": "169.1.1.3", "rtts": [15.2, 15.9, 16.1]}}
+```
+
+A valid interface that carried no traffic at all:
+
+```json
+{"result": "error", "reason": "No ICMP replies from arbitrary.internet.host.com via eth1 (3 packets sent, loss 100.0%).", "ping": {"host": "169.1.1.3", "rtts": []}}
+```
+
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### Built With

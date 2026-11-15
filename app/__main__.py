@@ -155,6 +155,7 @@ class WebRequestHandler(BaseHTTPRequestHandler):
         self.protocol_version = 'HTTP/1.0'
         log.info(f'GET {self.path} - headers {self.headers.keys()}')
         response = {'result': 'OK'}
+        status = 200
         try:
             host_name = self.headers.get(HEADER_HOST)
             source = self.headers.get(HEADER_SOURCE)
@@ -162,7 +163,6 @@ class WebRequestHandler(BaseHTTPRequestHandler):
             route_must_exclude = self._split_to_set(HEADER_ROUTE_EXCLUDE_CSV)
             hops_must_include_org = self._split_to_set(HEADER_HOPS_MUST_INCLUDE_ORG_CSV)
             hops_must_exclude_org = self._split_to_set(HEADER_HOPS_MUST_EXCLUDE_ORG_CSV)
-            test_ok = True
             match self.path:
                 case '/ping':
                     host: Host = ping(address=host_name, count=3, interval=1, source=source, privileged=False)
@@ -174,14 +174,30 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                         f'with round-trips of {host.packets_sent} packets ' \
                         f'(min: {host.min_rtt}, avg: {host.avg_rtt}, max: {host.max_rtt}, jitter: {host.jitter}) ' \
                         f'and loss {host.packet_loss*100}%.')
-                    ip_org = get_ip_org(ip=host.address)
-                    if ip_org:
-                        log.info(f'{host_name} ({host.address}) is owned by {ip_org}.')
                     response[self.path[1:]] = {'host': host.address, 'rtts': host.rtts}
-                    failure = self._check_latency(test_latency=host.min_rtt)
-                    if failure:
+                    if not host.is_alive:
+                        # The interface is valid but no traffic flowed: report an
+                        # unavailable circuit (e.g. an exhausted mobile data cap)
+                        # instead of an application failure. Keep the empty rtts as
+                        # evidence, and do not pay for an IPinfo lookup we cannot use.
+                        error_reason = f'No ICMP replies from {host_name}'
+                        if source:
+                            error_reason += f' via {source}'
+                        error_reason += f' ({host.packets_sent} packets sent, loss {host.packet_loss*100}%).'
+                        log.warning(error_reason)
+                        failure = {'result': 'error', 'reason': error_reason}
+                        failure[self.path[1:]] = response[self.path[1:]]
                         response = failure
-                        test_ok = False
+                        status = 503
+                    else:
+                        ip_org = get_ip_org(ip=host.address)
+                        if ip_org:
+                            log.info(f'{host_name} ({host.address}) is owned by {ip_org}.')
+                        failure = self._check_latency(test_latency=host.min_rtt)
+                        if failure:
+                            failure[self.path[1:]] = response[self.path[1:]]
+                            response = failure
+                            status = 503
                 case '/traceroute':
                     log.info(f'Traceroute to {host_name}...')
                     hops: List[Hop] = traceroute(address=host_name, count=1, source=source)
@@ -232,7 +248,7 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                         if failure:
                             error_reason += failure['reason']
                     if len(error_reason) > 0:
-                        test_ok = False
+                        status = 503
                         log.info(error_reason)
                         response = {'result': 'error', 'reason': error_reason.rstrip()}
                 case _:
@@ -240,11 +256,8 @@ class WebRequestHandler(BaseHTTPRequestHandler):
         except Exception as e:
             log.exception('Issue processing command.')
             response = {'result': 'error', 'reason': f'{e!s}'}
-            test_ok = False
-        if test_ok:
-            self.send_response(200)
-        else:
-            self.send_response(500)
+            status = 500
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         json_response = json.dumps(response)
         wire_response = bytes(json_response, 'utf-8')
