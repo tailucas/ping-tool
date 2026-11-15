@@ -31,6 +31,13 @@ CHECK_USER := vscode
 # Run tools from .venv without ever re-resolving: uv.lock is the source of truth.
 UV_RUN := uv run --frozen --no-sync
 
+# The interpreter request comes from .python-version, and uv discovers the host's
+# CPython. `uv python install` is deliberately NOT used: uv publishes no managed
+# CPython build for armv6l (`cpython-3.11-linux-arm-gnueabihf` does not exist), so
+# on the SBC only discovery can work. Fail early and say what to install instead.
+PYTHON_VERSION := $(shell cat .python-version 2>/dev/null)
+PYTHON_HINT := No CPython $(PYTHON_VERSION) found on this host. uv has no armv6l build to download, so install the system interpreter: sudo apt install python3-dev
+
 .PHONY: help check dev-build dev-up dev python sync sync-prod setup lock upgrade \
 	test verify docker datadir configure build push run rund connect clean \
 	unit install-unit uninstall-unit status logs
@@ -59,7 +66,7 @@ dev: dev-up ## Open a shell in the dev container
 
 .venv: pyproject.toml uv.lock .python-version ## Create/sync the Python virtual environment
 	@uv -V || (echo "Needs uv, see $(UV_URL)"; exit 1)
-	uv python install
+	@uv python find > /dev/null || (echo "$(PYTHON_HINT)"; exit 1)
 	uv sync --frozen
 	@touch $@
 
@@ -67,13 +74,13 @@ python: .venv ## Set up the Python virtual environment (alias)
 
 sync: ## Install exactly the locked dependency closure, including the dev group
 	@uv -V || (echo "Needs uv, see $(UV_URL)"; exit 1)
-	uv python install
+	@uv python find > /dev/null || (echo "$(PYTHON_HINT)"; exit 1)
 	uv sync --frozen
 	@touch .venv
 
 sync-prod: ## Install the locked closure without the dev group (what the service runs)
 	@uv -V || (echo "Needs uv, see $(UV_URL)"; exit 1)
-	uv python install
+	@uv python find > /dev/null || (echo "$(PYTHON_HINT)"; exit 1)
 	uv sync --frozen --no-dev
 	@touch .venv
 

@@ -112,6 +112,12 @@ and reports any temporary failure as `EAI_AGAIN` ("Try again"). `curl`, `ping`,
 fails. That asymmetry is a client-side difference, **not** uv choosing an
 interface: uv has no device binding, so routing is always the kernel's.
 
+The interpreter is **discovered, never downloaded**: uv publishes no managed
+CPython for `armv6l`, so `uv python install` fails with `No download found for
+request: cpython-3.11-linux-arm-gnueabihf`. The Makefile therefore only checks
+`uv python find` and points at `sudo apt install python3-dev` (Bookworm ships
+3.11). Never "fix" this by adding `uv python install` back.
+
 When `uv sync` fails with `dns error` / `failed to lookup address information:
 Try again` while `ping <host>`, `getent hosts <host>` and `ip route get <ip>`
 all look healthy, check in this order:

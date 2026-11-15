@@ -118,7 +118,7 @@ Here is some detail about the intended use of this package.
 As stated above, while this application can run as a container, I have decided to run it natively. Here's an excerpt of my SBC setup based on the [Raspberry Pi OS][pi-os-url] based on Debian. The container and dev-container workflow is driven by the [`Makefile`](Makefile) (`make help` lists every target), and `make` is available everywhere, including `armv6l`. The native deployment itself needs only the two dependencies below.
 
 * `uv` for Python dependency management: https://docs.astral.sh/uv/getting-started/installation/
-* `python3` for Python runtime: https://www.python.org/downloads/ which appears to be included now as default on Raspberry Pi OS.
+* `python3` for Python runtime: https://www.python.org/downloads/ which appears to be included now as default on Raspberry Pi OS. It must be **3.11** (`.python-version`): `uv` *discovers* the host interpreter, because uv publishes no managed CPython build for `armv6l`, so `uv python install` cannot be used on the SBC.
 * `make` to run the project targets below (present on most Debian installs; `sudo apt install make` if it is missing).
 
 TL;DR: here are the steps I followed (obviously defer to the package docs to keep this valid) to get the dependency closure to install correctly on `armv6l`. The standalone installer picks `uv-arm-unknown-linux-musleabihf`, a statically linked binary that runs on Raspberry Pi OS, and `uv` selects (or downloads) a matching CPython (`>=3.11`) for the project. Dependencies without an `armv6l` wheel are built from source, so the Python3 development headers (and, for anything that needs the `cryptography` wheel, Rust) still have to be present.
@@ -147,7 +147,7 @@ APP_NAME="ping-tool"
 ```
 3. Let `uv` create the Python virtual environment in the project directory, install exactly what `uv.lock` pins (runtime dependencies only — the SBC does not run the tests), and render the systemd unit for this checkout. `.python-version` pins the interpreter to 3.11, which is what the SBC runs.
 ```sh
-make setup               # uv python install + uv sync --frozen --no-dev + make unit
+make setup               # uv sync --frozen --no-dev + make unit
 ```
 4. To run and auto-start the application, install the systemd unit straight from the checkout. `ping-tool.service.in` is a template: `make unit` (part of `make setup`) renders it with the absolute path of this clone plus the runtime contract (`APP_NAME`, `SERVER_ADDRESS`, `SERVER_PORT`) taken from the Makefile, so there is nothing to hand-edit. The installed unit also reads the optional `.env` (that is where `IPINFO_TOKEN` belongs) and starts the `app` console script from `.venv` directly. Note that elevated privileges are needed by `icmplib` in order to perform `traceroute` functions.
 ```sh

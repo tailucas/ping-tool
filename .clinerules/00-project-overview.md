@@ -39,9 +39,10 @@ placeholders are self-describing: `<backup-gateway>`, `<host-lan-ip>`, `<home>`,
 ## Runtime facts (verified on the deployed host)
 
 - Python **3.11** (pinned in `.python-version`), dependencies managed by **uv**
-  (`pyproject.toml` + committed `uv.lock`). Entry point is
-  `app = "app.__main__:main"` in `[project.scripts]`, installed as
-  `<app-dir>/.venv/bin/app`.
+  (`pyproject.toml` + committed `uv.lock`). The interpreter is *discovered* from
+  the host — uv has no managed CPython build for `armv6l`, so `uv python install`
+  fails there. Entry point is `app = "app.__main__:main"` in `[project.scripts]`,
+  installed as `<app-dir>/.venv/bin/app`.
 - `icmplib` is a **git fork**: `https://github.com/tglucas/icmplib.git`. The fork adds
   `SO_BINDTODEVICE` support and lets `source=` take an **interface name** as well as an
   IP address. Never replace it with the PyPI release — interface pinning is the entire
