@@ -46,7 +46,8 @@ Failure (circuit carried no traffic):
 ```
 
 - The body key for the measurement is `self.path[1:]` (`ping` / `traceroute`). Failure
-  bodies keep it so the caller can see the empty `rtts` as evidence.
+  bodies keep it so the caller can see the empty `rtts` as evidence. `/ping` does this;
+  `/traceroute` currently does not (see the defect list in `50-operations.md`).
 - Status is chosen explicitly by the handler (`status`, initialised to `200`):
   - `200` — the test passed.
   - `503` — the circuit under test could not carry traffic, or carried it via the wrong

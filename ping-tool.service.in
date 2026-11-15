@@ -1,0 +1,34 @@
+[Unit]
+Description=Ping Tool for Health Checks
+After=network.target tailscaled.service
+AssertPathExists=@APP_DIR@
+
+[Service]
+Type=simple
+# Rendered by `make unit` from ping-tool.service.in: the checkout path and the
+# Environment= block come from the Makefile. Do not edit the rendered copy by
+# hand (build/ping-tool.service); edit the template.
+#
+# Optional extras such as IPINFO_TOKEN are read from the project .env (written
+# by `make configure`). The leading `-` means a missing file is not an error.
+EnvironmentFile=-@APP_DIR@/.env
+# The required contract is baked in, so the unit works without a .env. These
+# come after EnvironmentFile=, so they win over anything it defines.
+Environment="APP_NAME=@APP_NAME@"
+Environment="SERVER_ADDRESS=@SERVER_ADDRESS@"
+Environment="SERVER_PORT=@SERVER_PORT@"
+#
+# The virtualenv, including the `app` console script, is provisioned by
+# `make sync` (uv sync --frozen --no-dev). Running the script directly keeps uv
+# out of the service's process tree and signal path.
+#
+# No User=/Group= on purpose: SO_BINDTODEVICE and the raw sockets used by
+# traceroute() need root. Adding a user requires AmbientCapabilities=CAP_NET_RAW.
+ExecStart=@APP_DIR@/.venv/bin/app
+WorkingDirectory=@APP_DIR@
+Restart=always
+RestartSec=30
+SyslogIdentifier=%n
+
+[Install]
+WantedBy=multi-user.target

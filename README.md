@@ -99,7 +99,7 @@ A valid interface that carried no traffic at all:
 
 Technologies that help make this package useful:
 
-[![Poetry][poetry-shield]][poetry-url]
+[![uv][uv-shield]][uv-url]
 [![Python][python-shield]][python-url]
 [![Uptime Kuma][uptime-kuma-shield]][uptime-kuma-url]
 [![Tailscale][tailscale-shield]][tailscale-url]
@@ -115,18 +115,18 @@ Here is some detail about the intended use of this package.
 
 ### Environment Setup
 
-As stated above, while this application can run as a container, I have decided to run it natively. Here's an excerpt of my SBC setup based on the [Raspberry Pi OS][pi-os-url] based on Debian. Unfortunately, [task](https://taskfile.dev/installation/#install-script) does not appear to support ARMv6 which is what I normally use to orchestrate project setup and container builds. The steps below bypass this.
+As stated above, while this application can run as a container, I have decided to run it natively. Here's an excerpt of my SBC setup based on the [Raspberry Pi OS][pi-os-url] based on Debian. The container and dev-container workflow is driven by the [`Makefile`](Makefile) (`make help` lists every target), and `make` is available everywhere, including `armv6l`. The native deployment itself needs only the two dependencies below.
 
-* `poetry` for Python dependency management: https://python-poetry.org/docs/#installation
+* `uv` for Python dependency management: https://docs.astral.sh/uv/getting-started/installation/
 * `python3` for Python runtime: https://www.python.org/downloads/ which appears to be included now as default on Raspberry Pi OS.
+* `make` to run the project targets below (present on most Debian installs; `sudo apt install make` if it is missing).
 
-TL;DR: here are the steps I followed (obviously defer to the package docs to keep this valid) to get the dependency closure to install correctly on `armv6l`. Poetry needs the Python `cryptography` wheel (as do most things), Rust is needed to build the `cryptography` wheel (there's a long debate on this not in the scope of this guide), and the Python3 development headers are needed to build against the Python programming interface.
+TL;DR: here are the steps I followed (obviously defer to the package docs to keep this valid) to get the dependency closure to install correctly on `armv6l`. The standalone installer picks `uv-arm-unknown-linux-musleabihf`, a statically linked binary that runs on Raspberry Pi OS, and `uv` selects (or downloads) a matching CPython (`>=3.11`) for the project. Dependencies without an `armv6l` wheel are built from source, so the Python3 development headers (and, for anything that needs the `cryptography` wheel, Rust) still have to be present.
 
 ```sh
-sudo apt install python3-dev
-sudo apt install libssl-dev
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y
-curl -sSL https://install.python-poetry.org | python3 -
+sudo apt install python3-dev libssl-dev make
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | bash -s -- -y    # only if a dependency has no armv6l wheel
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 **Note:** This took a *very* long time on my model B+. I didn't keep tabs but probably 6 hours in total.
@@ -145,19 +145,61 @@ SERVER_ADDRESS="0.0.0.0"
 SERVER_PORT="8080"
 APP_NAME="ping-tool"
 ```
-3. Tell Poetry to create the Python virtual environment (configured already to do this in the project directory) and install the application.
+3. Let `uv` create the Python virtual environment in the project directory and install the application exactly as pinned by `uv.lock`. `.python-version` pins the interpreter to 3.11, which is what the SBC runs.
 ```sh
-poetry install
+uv sync --frozen --no-dev
 ```
-4. To run and auto-start the application, I created a systemd unit file. A sample is included in this project so make the required edits. Note that elevated privileges are needed by `icmplib` in order to perform `traceroute` functions.
+4. To run and auto-start the application, install the systemd unit straight from the checkout. `ping-tool.service.in` is a template: `make unit` renders it with the absolute path of this clone plus the runtime contract (`APP_NAME`, `SERVER_ADDRESS`, `SERVER_PORT`) taken from the Makefile, so there is nothing to hand-edit. The installed unit also reads the optional `.env` (that is where `IPINFO_TOKEN` belongs) and starts the `app` console script from `.venv` directly. Note that elevated privileges are needed by `icmplib` in order to perform `traceroute` functions.
 ```sh
-sudo cp ping-tool.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable ping-tool
-sudo systemctl start ping-tool
-sudo systemctl status ping-tool
-journalctl -f -u ping-tool
+make unit                # render build/ping-tool.service for this checkout
+make install-unit        # install + daemon-reload + enable + restart
+make status              # unit state and whether port 8080 is listening
+make logs                # journalctl -f -u ping-tool
 ```
+Run `make install-unit` as your normal user (it escalates only for the install and `systemctl` steps) so `build/` and `.venv` stay owned by you. `make uninstall-unit` stops, disables and removes the installed unit.
+
+### Common Commands
+
+Everything about building, running and testing the project lives in the `Makefile`; running `make` with no arguments prints the list.
+
+| Command | Purpose |
+| --- | --- |
+| `make` / `make help` | List every target with a one-line description. |
+| `make sync` | `uv sync --frozen` — install exactly what `uv.lock` resolved into `.venv`. |
+| `make test` | Run the test suite (offline; ICMP is mocked). |
+| `make verify` | Fast gate: lockfile agrees, tests pass, sources compile. |
+| `make lock` / `make upgrade` | Re-resolve `uv.lock` / refresh it to the newest allowed versions. |
+| `make configure` | Generate `.env` for the container from the Makefile variables. |
+| `make build` / `make push` | Build / push the container image. |
+| `make run` / `make rund` | Run the container in the foreground / detached. |
+| `make datadir` | Create `./data/` owned by `USER_ID:GROUP_ID`. |
+| `make connect` | Open a shell in the running container. |
+| `make dev` / `dev-build` / `dev-up` | Dev-container targets (host only). |
+| `make unit` | Render the systemd unit for this checkout into `build/`. |
+| `make install-unit` / `uninstall-unit` | Install, enable and restart / remove the systemd unit. |
+| `make status` / `make logs` | Unit state plus port check / follow the service journal. |
+| `make clean` | Remove caches, `.env`, the generated `docker-compose.yml` and `build/`. |
+
+### Dependency Management
+
+Dependencies are declared in `pyproject.toml` (`[project.dependencies]` for runtime, the `dev` group for tests) and resolved into `uv.lock`, which is committed.
+
+```sh
+uv add <package>            # add a runtime dependency
+uv add --dev <package>      # add a development dependency
+make lock && make sync      # re-resolve the lockfile and install it
+make test                   # prove the closure still works
+```
+
+### Testing
+
+The test suite drives the real request handler over a socket pair with ICMP mocked, so it needs no interface, no privileges and no network.
+
+```sh
+make test                  # or: uv run --frozen pytest
+```
+
+Tests marked `xfail` document the known defects in this project (`xfail_strict` is enabled, so a defect that stops failing must have its marker removed in the same change).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -210,8 +252,8 @@ Distributed under the MIT License. See [LICENSE](LICENSE) for more information.
 
 [imcplib-shield]: https://img.shields.io/github/license/tailucas/ping-tool.svg?style=for-the-badge
 [imcplib-url]: https://github.com/ValentinBELYN/icmplib
-[poetry-url]: https://python-poetry.org/
-[poetry-shield]: https://img.shields.io/static/v1?style=for-the-badge&message=Poetry&color=60A5FA&logo=Poetry&logoColor=FFFFFF&label=
+[uv-url]: https://docs.astral.sh/uv/
+[uv-shield]: https://img.shields.io/static/v1?style=for-the-badge&message=uv&color=DE5FE9&label=
 [python-url]: https://www.python.org/
 [python-shield]: https://img.shields.io/static/v1?style=for-the-badge&message=Python&color=3776AB&logo=Python&logoColor=FFFFFF&label=
 [requests-url]: https://requests.readthedocs.io/en/latest/

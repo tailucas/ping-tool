@@ -1,19 +1,36 @@
-[tool.poetry]
+[project]
 name = "app"
 version = "0.1.0"
 description = "A ping app."
-authors = ["Tai Lucas <tglucas@gmail.com>"]
+authors = [{ name = "Tai Lucas", email = "tglucas@gmail.com" }]
 license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "icmplib @ git+https://github.com/tglucas/icmplib.git",
+    "requests>=2.32.3,<3.0.0",
+]
 
-[tool.poetry.scripts]
+[project.scripts]
 app = "app.__main__:main"
 
-[tool.poetry.dependencies]
-python = "^3.11"
-icmplib = {git = "https://github.com/tglucas/icmplib.git"}
-requests = "^2.32.3"
+[dependency-groups]
+dev = [
+    "pytest>=8.3.4",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["uv_build>=0.11.16,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "app"
+module-root = ""
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# A defect listed in .clinerules/40-validation.md is expected to fail. If one
+# starts passing, the marker must be removed and that table updated in the same
+# change, so XPASS is a failure rather than a silent pass.
+xfail_strict = true

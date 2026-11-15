@@ -3,4 +3,4 @@ set -eu
 
 echo "Running simple app entrypoint."
 
-exec env poetry run app
+exec uv run --frozen --no-dev app

@@ -2,13 +2,13 @@
 set -eu
 set -o pipefail
 
-if ! task --version; then
-  sh -c "$(curl -sSL https://taskfile.dev/install.sh)" -- -b ~/.local/bin
+# Debian-based base image: only uv has to be installed here.
+if ! uv --version; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
 fi
 
-if ! poetry --version; then
-  curl -sSL https://install.python-poetry.org | POETRY_HOME=~/.local python3 -
-fi
+uv sync --frozen
+uv tree
 
-poetry install --no-interaction
-poetry show --tree
+echo "Ready. Inside the container: make help / make test / make verify"

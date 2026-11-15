@@ -24,16 +24,24 @@ placeholders are self-describing: `<backup-gateway>`, `<host-lan-ip>`, `<home>`,
 | --- | --- |
 | `app/__main__.py` | The whole service: logging bootstrap, IP-org lookup, `WebRequestHandler`, endpoints, `main()`. |
 | `app/__init__.py` | `APP_NAME` (read from env at import) and `WORK_DIR`. |
-| `ping-tool.service` | systemd unit sample, installed to `/etc/systemd/system/`. |
+| `pyproject.toml` | PEP 621 metadata, runtime `[project.dependencies]`, `dev` dependency group, `app` console script, pytest config. |
+| `uv.lock` | Committed lockfile; `uv sync --frozen` is the only supported install. |
+| `.python-version` | Pins the interpreter to **3.11**, matching the SBC. |
+| `tests/` | `pytest` suite for the handler, helpers and IPinfo enrichment. |
+| `ping-tool.service.in` | systemd unit **template**; `make unit` renders it for the checkout and `make install-unit` installs it to `/etc/systemd/system/`. |
+| `Makefile` | The **only** task runner: dev container, `uv` sync/lock/test/verify, and container `configure`/`build`/`run`/`connect`. `make help` is authoritative. |
+| `docker-compose.template`, `Dockerfile`, `app_entrypoint.sh`, `.dockerignore` | Container build/run path (secondary; production is a venv + systemd). |
 | `config/app.conf` | Tiny templated config for the container base image, **not read by the Python code**. |
-| `app.yml`, `Taskfile.yml`, `Dockerfile`, `docker-compose.template`, `app_entrypoint.sh` | Container build/run path (secondary; production is a venv + systemd). |
 | `config_interpol`, `yaml_interpol`, `cred_tool`, `make-app-user.sh`, `connect_to_app.sh` | Helper scripts inherited from the base-app template; do not "fix" them as part of app work. |
 | `README.md` | Authoritative user-facing description of the probe design, headers and deployment. Update it with any behaviour change. |
 | `.devcontainer/` | VS Code devcontainer (`--network=host`), needs Docker + devcontainer CLI (`make build`). |
 
 ## Runtime facts (verified on the deployed host)
 
-- Python **3.11**, Poetry. Entry point is `app = "app.__main__:main"` in `pyproject.toml`.
+- Python **3.11** (pinned in `.python-version`), dependencies managed by **uv**
+  (`pyproject.toml` + committed `uv.lock`). Entry point is
+  `app = "app.__main__:main"` in `[project.scripts]`, installed as
+  `<app-dir>/.venv/bin/app`.
 - `icmplib` is a **git fork**: `https://github.com/tglucas/icmplib.git`. The fork adds
   `SO_BINDTODEVICE` support and lets `source=` take an **interface name** as well as an
   IP address. Never replace it with the PyPI release — interface pinning is the entire
@@ -62,8 +70,16 @@ placeholders are self-describing: `<backup-gateway>`, `<host-lan-ip>`, `<home>`,
 
 - Keep the service **dependency-light and single-module** unless a real requirement
   forces a split. Do not introduce a web framework, async runtime or plugin system.
-- New dependencies must be added through Poetry so `pyproject.toml` and `poetry.lock`
-  stay in sync; do not `pip install` into the deployed venv by hand.
+- New dependencies must be added through uv (`uv add` / `uv add --dev`) so
+  `pyproject.toml` and the committed `uv.lock` stay in sync; do not `pip install`
+  into the deployed venv by hand and do not run `uv sync` without `--frozen` on
+  the host.
+- The **`Makefile` is the only task runner** — there is no Taskfile or `app.yml`.
+  New build/operational commands belong in the Makefile as a target with a `##`
+  description so `make help` stays complete. Identity and build variables
+  (`PROJECT_NAME`, `SERVER_*`, `LANG`, ...) use `:=`, not `?=`, so an ambient
+  shell variable cannot silently retag the container; only secrets such as
+  `IPINFO_TOKEN` are read from the environment.
 - The caller is a monitoring system (Uptime Kuma): **2xx = healthy, non-2xx = down**.
   Never turn a failed network test into a 2xx, and never turn a caller/configuration
   mistake into a "network is down" verdict (see `20-http-api-contract.md`).

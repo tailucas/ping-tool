@@ -71,6 +71,27 @@ using `icmplib.` prefixes in the body.
   deliberately documenting why it is irrelevant (the existing `# don't care, tested
   later` comment is the accepted idiom).
 
+## Tests
+
+Tests live in `tests/` and run with `pytest` (`uv run --frozen pytest`). They are not
+shipped: `pytest` belongs to the `dev` dependency group, never to
+`[project.dependencies]`.
+
+- `tests/conftest.py` sets `APP_NAME` before `app` is imported and clears
+  `IPINFO_TOKEN`; do not rely on the ambient environment in a test.
+- Request-level tests build a raw request, serve it through a `socketpair` with the
+  real `WebRequestHandler` (subclassed only to silence the access log), and parse the
+  reply with `http.client.HTTPResponse`. Assert on the status code and the decoded JSON
+  body, not on log lines.
+- Patch the module attributes the handler calls — `app.__main__.ping`,
+  `app.__main__.traceroute`, `app.__main__.get_ip_org` — and use the real `icmplib`
+  `Host`/`Hop` classes so latency and liveness semantics stay faithful.
+- Test names are full sentences describing the verdict:
+  `test_ping_no_replies_is_a_circuit_verdict_not_a_crash`.
+- Known defects are marked `pytest.mark.xfail` with a reason naming
+  `40-validation.md`. `xfail_strict` is on, so a fixed defect must have its marker
+  removed in the same change.
+
 ## Style details to preserve
 
 - 4-space indentation, single quotes for short strings, double quotes only where the
