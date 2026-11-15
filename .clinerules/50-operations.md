@@ -71,6 +71,21 @@ If `ping-tool.service.in` or the Makefile's `APP_NAME`/`SERVER_*` values changed
 it, reloads systemd, re-enables and restarts the service. `make status` and
 `make logs` cover the checks above.
 
+To replace a **hand-edited** unit (or one with a `ping-tool.service.d/` drop-in)
+with the generated one, remove it first, then install:
+
+```bash
+sudo systemctl cat ping-tool.service      # read-only: shows the merged unit + drop-ins
+make uninstall-unit                       # disable --now, rm unit + drop-ins, daemon-reload
+make install-unit
+```
+
+`uninstall-unit` stops before deleting on purpose: removing the file first leaves
+dangling `*.wants` symlinks. The reload you need after touching unit files is
+`systemctl daemon-reload`; `systemctl reload` only re-reads the *service's* own
+configuration, which this app does not implement. Journal history survives the
+removal (`journalctl -u ping-tool` still shows it).
+
 Do not restart the service to "test" a change; use the throwaway instance recipe in
 `40-validation.md`.
 

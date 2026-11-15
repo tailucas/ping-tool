@@ -182,11 +182,21 @@ install-unit: build/$(UNIT_NAME) sync ## Install, enable and (re)start the syste
 	sudo systemctl restart $(UNIT_NAME)
 	@sudo systemctl --no-pager --lines=0 is-active $(UNIT_NAME)
 
-uninstall-unit: ## Stop, disable and remove the installed unit (sudo)
+uninstall-unit: ## Stop, disable and remove the installed unit and its drop-ins (sudo)
 	@test -d /run/systemd/system || (echo "systemd is not running here; run this on the host."; exit 1)
 	-sudo systemctl disable --now $(UNIT_NAME)
 	sudo rm -f $(UNIT_PATH)
+	@if [ -d $(UNIT_PATH).d ]; then \
+	  echo "Removing drop-ins in $(UNIT_PATH).d/"; \
+	  sudo rm -rf $(UNIT_PATH).d; \
+	fi
 	sudo systemctl daemon-reload
+	-sudo systemctl reset-failed $(UNIT_NAME)
+	@test ! -e $(UNIT_PATH) || (echo "$(UNIT_PATH) still exists."; exit 1)
+	@ss -ltn | grep -q ":$(SERVER_PORT) " \
+	  && echo "WARNING: something still listens on port $(SERVER_PORT)." \
+	  || echo "$(UNIT_NAME) removed; port $(SERVER_PORT) is free."
+	@echo "Reinstall with: make install-unit"
 
 status: ## Show the unit state and whether the probe port is listening
 	@systemctl --no-pager --lines=5 status $(UNIT_NAME) || true

@@ -156,7 +156,7 @@ make install-unit        # install + daemon-reload + enable + restart
 make status              # unit state and whether port 8080 is listening
 make logs                # journalctl -f -u ping-tool
 ```
-Run `make install-unit` as your normal user (it escalates only for the install and `systemctl` steps) so `build/` and `.venv` stay owned by you. `make uninstall-unit` stops, disables and removes the installed unit.
+Run `make install-unit` as your normal user (it escalates only for the install and `systemctl` steps) so `build/` and `.venv` stay owned by you. `make uninstall-unit` stops and disables the service, then removes the installed unit plus any `ping-tool.service.d/` drop-ins and reloads systemd.
 
 ### Common Commands
 
